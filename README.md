@@ -12,7 +12,25 @@ This code was developed while learning from the **Build LLM From Scratch** playl
 *   Data loading and preparation using `tiktoken` and `torch.utils.data.Dataset`.
 *   Basic text generation capability.
 *   Training loop with loss calculation and evaluation.
-*   Example usage script demonstrating training on a sample text.
+*   Plotting of training/validation losses.
+
+## Project Structure
+
+```
+gpt2_from_scratch/
+├── model/             # Core GPT model definition
+│   ├── __init__.py
+│   └── gpt2_model.py
+├── utils/             # Utility functions
+│   ├── __init__.py
+│   ├── data_utils.py    # Dataset/Dataloader code
+│   └── train_utils.py   # Training loop, eval, generation helpers
+├── config.py          # Model configuration
+├── train.py           # Main training script
+├── the-verdict.txt    # Sample training data
+├── training_losses.png # Example output plot
+└── README.md
+```
 
 ## Usage
 
@@ -22,7 +40,13 @@ This code was developed while learning from the **Build LLM From Scratch** playl
     ```
 2.  **Run the training script:**
     ```bash
-    python gpt2.py
+    python train.py
     ```
 
-This will download the sample data ('the-verdict.txt'), initialize the model, train it for a few epochs using the configurations set in the script, print evaluation losses, generate sample text periodically, and finally plot the training/validation loss curves.
+This will:
+*   Download the sample data ('the-verdict.txt') if not present.
+*   Load the model configuration from `config.py`.
+*   Initialize the model, tokenizer, and data loaders.
+*   Run the training loop defined in `train.py` using functions from `utils/`.
+*   Print evaluation losses and generate sample text periodically.
+*   Save a plot of the training/validation loss curves to `training_losses.png`.
