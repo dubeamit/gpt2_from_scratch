@@ -88,4 +88,16 @@ dmypy.json
 
 # Miscellaneous
 *.log
+*.png # Ignore generated plots
+
+# Downloaded GPT-2 Models (adjust if needed)
+gpt2/
+
+# SMS Spam Classification Data
+sms_spam_collection.zip
+sms_spam_collection/
+*.csv # Ignore train/val/test splits
+
+# Saved Models
+*.pth
 

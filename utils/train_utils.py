@@ -8,6 +8,7 @@ model evaluation on datasets, and the main training loop.
 import torch
 import tiktoken
 import torch.nn.functional as F
+import numpy as np # Add numpy for weight loading
 
 # --- Text Generation Helpers --- #
 
@@ -336,3 +337,120 @@ def train_model_simple(model, train_loader, val_loader, optimizer, device, num_e
 
     print("---- Training Finished ----")
     return train_losses, val_losses, track_tokens_seen 
+
+# --- Weight Loading Utilities --- #
+
+def assign(left, right):
+    """Helper function to assign NumPy array values to PyTorch parameters.
+
+    Handles shape checking and tensor conversion.
+
+    Args:
+        left (torch.nn.Parameter): The PyTorch parameter to assign to.
+        right (np.ndarray): The NumPy array containing the weights/biases.
+
+    Returns:
+        torch.nn.Parameter: The updated PyTorch parameter.
+
+    Raises:
+        ValueError: If the shapes of `left` and `right` do not match.
+    """
+    if left.shape != right.shape:
+        raise ValueError(f"Shape mismatch. Left: {left.shape}, Right: {right.shape}")
+    # Convert NumPy array to PyTorch tensor and wrap in Parameter
+    # Use .clone().detach() to ensure it's a new tensor unrelated to the numpy array's memory
+    return torch.nn.Parameter(torch.tensor(right).clone().detach())
+
+def load_weights_into_gpt(gpt_model, params):
+    """Loads pre-trained GPT-2 weights from a dictionary into a GPTModel instance.
+
+    Maps the parameter names from the downloaded checkpoint format (OpenAI's) 
+    to the layer names in the custom GPTModel implementation.
+
+    Args:
+        gpt_model (GPTModel): An instance of the GPTModel class.
+        params (dict): A dictionary containing the pre-trained weights (typically loaded from NumPy files).
+                      Expected keys match the OpenAI checkpoint structure (e.g., 'wte', 'wpe', 'blocks').
+    """
+    print("Loading weights into model...")
+
+    # Assign positional and token embeddings
+    gpt_model.pos_emb.weight = assign(gpt_model.pos_emb.weight, params['wpe']) # Positional embeddings
+    gpt_model.tok_emb.weight = assign(gpt_model.tok_emb.weight, params['wte']) # Token embeddings
+
+    # Iterate through each Transformer block
+    for b in range(len(params["blocks"])):
+        # --- Attention Weights --- #
+        # Load Query, Key, Value weights and biases
+        # OpenAI's checkpoints store QKV weights combined in 'c_attn'. We split them.
+        # Weights need transposing (.T) due to different dimension conventions.
+        q_w, k_w, v_w = np.split(params["blocks"][b]["attn"]["c_attn"]["w"], 3, axis=-1)
+        gpt_model.trf_blocks[b].att.W_query.weight = assign(gpt_model.trf_blocks[b].att.W_query.weight, q_w.T)
+        gpt_model.trf_blocks[b].att.W_key.weight = assign(gpt_model.trf_blocks[b].att.W_key.weight, k_w.T)
+        gpt_model.trf_blocks[b].att.W_value.weight = assign(gpt_model.trf_blocks[b].att.W_value.weight, v_w.T)
+
+        q_b, k_b, v_b = np.split(params["blocks"][b]["attn"]["c_attn"]["b"], 3, axis=-1)
+        # Ensure the model's Linear layers have bias=True when loading these
+        if gpt_model.trf_blocks[b].att.W_query.bias is not None:
+            gpt_model.trf_blocks[b].att.W_query.bias = assign(gpt_model.trf_blocks[b].att.W_query.bias, q_b)
+            gpt_model.trf_blocks[b].att.W_key.bias = assign(gpt_model.trf_blocks[b].att.W_key.bias, k_b)
+            gpt_model.trf_blocks[b].att.W_value.bias = assign(gpt_model.trf_blocks[b].att.W_value.bias, v_b)
+        else:
+            print(f"Warning: Skipping QKV bias loading for block {b} as model bias is None.")
+
+        # Load Attention output projection weights and biases
+        gpt_model.trf_blocks[b].att.out_proj.weight = assign(
+            gpt_model.trf_blocks[b].att.out_proj.weight,
+            params["blocks"][b]["attn"]["c_proj"]["w"].T # Transpose needed
+        )
+        if gpt_model.trf_blocks[b].att.out_proj.bias is not None:
+            gpt_model.trf_blocks[b].att.out_proj.bias = assign(
+                gpt_model.trf_blocks[b].att.out_proj.bias,
+                params["blocks"][b]["attn"]["c_proj"]["b"]
+            )
+        else:
+             print(f"Warning: Skipping Attn output projection bias loading for block {b} as model bias is None.")
+
+        # --- FeedForward Weights --- #
+        # Load first linear layer (expansion) weights and biases
+        gpt_model.trf_blocks[b].ff.layers[0].weight = assign(
+            gpt_model.trf_blocks[b].ff.layers[0].weight,
+            params["blocks"][b]["mlp"]["c_fc"]["w"].T # Transpose needed
+        )
+        if gpt_model.trf_blocks[b].ff.layers[0].bias is not None:
+            gpt_model.trf_blocks[b].ff.layers[0].bias = assign(
+                gpt_model.trf_blocks[b].ff.layers[0].bias,
+                params["blocks"][b]["mlp"]["c_fc"]["b"]
+            )
+        else:
+            print(f"Warning: Skipping FFN layer 0 bias loading for block {b} as model bias is None.")
+
+        # Load second linear layer (projection) weights and biases
+        gpt_model.trf_blocks[b].ff.layers[2].weight = assign(
+            gpt_model.trf_blocks[b].ff.layers[2].weight,
+            params["blocks"][b]["mlp"]["c_proj"]["w"].T # Transpose needed
+        )
+        if gpt_model.trf_blocks[b].ff.layers[2].bias is not None:
+            gpt_model.trf_blocks[b].ff.layers[2].bias = assign(
+                gpt_model.trf_blocks[b].ff.layers[2].bias,
+                params["blocks"][b]["mlp"]["c_proj"]["b"]
+            )
+        else:
+             print(f"Warning: Skipping FFN layer 2 bias loading for block {b} as model bias is None.")
+
+        # --- Layer Normalization Weights --- #
+        # Load LayerNorm scales (gamma) and shifts (beta)
+        gpt_model.trf_blocks[b].norm1.scale = assign(gpt_model.trf_blocks[b].norm1.scale, params["blocks"][b]["ln_1"]["g"])
+        gpt_model.trf_blocks[b].norm1.shift = assign(gpt_model.trf_blocks[b].norm1.shift, params["blocks"][b]["ln_1"]["b"])
+        gpt_model.trf_blocks[b].norm2.scale = assign(gpt_model.trf_blocks[b].norm2.scale, params["blocks"][b]["ln_2"]["g"])
+        gpt_model.trf_blocks[b].norm2.shift = assign(gpt_model.trf_blocks[b].norm2.shift, params["blocks"][b]["ln_2"]["b"])
+
+    # --- Final Layer Normalization Weights --- #
+    gpt_model.final_norm.scale = assign(gpt_model.final_norm.scale, params["g"])
+    gpt_model.final_norm.shift = assign(gpt_model.final_norm.shift, params["b"])
+
+    # --- Output Head Weight Tying --- #
+    # Assign the token embedding weights to the output layer (weight tying)
+    gpt_model.out_head.weight = assign(gpt_model.out_head.weight, params["wte"])
+
+    print("Finished loading weights.") 
