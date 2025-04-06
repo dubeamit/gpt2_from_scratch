@@ -96,8 +96,18 @@ gpt2/
 # SMS Spam Classification Data
 sms_spam_collection.zip
 sms_spam_collection/
-*.csv # Ignore train/val/test splits
+# Ignore generated CSVs within the data directory
+data/*.csv
 
 # Saved Models
 *.pth
+*.pt
+
+# Output files (plots, etc.)
+outputs/
+
+# Training plots (remove if moved to outputs/)
+# finetune-loss-plot.png
+# finetune-accuracy-plot.png
+# training_losses.png
 

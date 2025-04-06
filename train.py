@@ -52,7 +52,7 @@ def main():
 
     # --- Data Loading and Preparation ---
     # Define file path and download URL for the dataset
-    file_path = "the-verdict.txt"
+    file_path = "data/the-verdict.txt"
     url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch02/01_main-chapter-code/the-verdict.txt"
 
     print(f"Loading data from {file_path}...")

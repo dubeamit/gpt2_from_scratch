@@ -16,6 +16,7 @@ import zipfile
 import os
 from pathlib import Path
 import time
+import shutil
 
 # --- Data Handling --- #
 
@@ -110,16 +111,32 @@ def prepare_spam_dataset(url, zip_path, extracted_path, data_file_path, force_do
     balanced_df["Label"] = balanced_df["Label"].map({"ham": 0, "spam": 1})
 
     train_df, validation_df, test_df = random_split(balanced_df, 0.7, 0.1)
-
-    # Save splits to CSV files
-    try:
-        train_df.to_csv("train.csv", index=None)
-        validation_df.to_csv("validation.csv", index=None)
-        test_df.to_csv("test.csv", index=None)
-        print("Saved train, validation, and test sets to CSV files.")
-    except Exception as e:
-        print(f"ERROR: Failed to save data splits to CSV: {e}")
-        return None, None, None # Indicate failure even if splits were created
+    
+    # Ensure the data directory exists
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+    
+    # Save splits to CSV files in the 'data' directory
+    train_df.to_csv(data_dir / "train.csv", index=None)
+    validation_df.to_csv(data_dir / "validation.csv", index=None)
+    test_df.to_csv(data_dir / "test.csv", index=None)
+    
+    print(f"Saved train ({len(train_df)}), validation ({len(validation_df)}), and test ({len(test_df)}) sets to 'data/' directory.")
+    
+    # Clean up downloaded/extracted files
+    if os.path.exists(zip_path):
+        try:
+            os.remove(zip_path)
+            print(f"Removed downloaded zip: {zip_path}")
+        except OSError as e:
+            print(f"Error removing zip file {zip_path}: {e}")
+            
+    if os.path.exists(extracted_path):
+        try:
+            shutil.rmtree(extracted_path)
+            print(f"Removed extracted directory: {extracted_path}")
+        except OSError as e:
+             print(f"Error removing directory {extracted_path}: {e}")
 
     return train_df, validation_df, test_df # Return the dataframes as well
 
@@ -354,14 +371,25 @@ def train_classifier_simple(model, train_loader, val_loader, optimizer, device,
 
 # --- Plotting Utility --- #
 
-def plot_values(epochs_seen, examples_seen, train_values, val_values, label="loss"):
-    """Plots training and validation loss or accuracy against epochs and examples seen."""
+def plot_values(epochs_seen, examples_seen, train_values, val_values, label="loss", output_path=None):
+    """Plots training and validation loss or accuracy against epochs and examples seen.
+
+    Args:
+        epochs_seen: List or array of epoch numbers (or steps) for the x-axis.
+        examples_seen: List or array of examples seen counts for the secondary x-axis.
+        train_values: List or array of training metric values.
+        val_values: List or array of validation metric values.
+        label (str): The label for the y-axis (e.g., 'loss', 'accuracy').
+        output_path (str, optional): Path to save the plot image file. 
+                                      If None, generates a default name in the current directory.
+                                      Defaults to None.
+    """
     fig, ax1 = plt.subplots(figsize=(7, 4)) # Slightly larger figure
 
     # Plot values against epochs (primary x-axis)
     ax1.plot(epochs_seen, train_values, label=f"Training {label}")
     ax1.plot(epochs_seen, val_values, linestyle="--", label=f"Validation {label}") # Dashed validation line
-    ax1.set_xlabel("Epochs")
+    ax1.set_xlabel("Steps" if label == "loss" else "Epochs") # Use Steps for loss plot, Epochs for accuracy
     ax1.set_ylabel(label.capitalize())
     ax1.tick_params(axis='y')
     ax1.legend(loc='upper left')
@@ -381,48 +409,19 @@ def plot_values(epochs_seen, examples_seen, train_values, val_values, label="los
     ax2.tick_params(axis='x')
 
     fig.tight_layout() # Adjust layout
-    plot_filename = f"finetune-{label}-plot.png" # Changed extension to png
+    
+    # Determine filename based on output_path or default
+    if output_path:
+        plot_filename = output_path
+        # Ensure the output directory exists
+        output_dir = Path(plot_filename).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        plot_filename = f"finetune-{label}-plot.png" # Default filename
+        
     try:
         plt.savefig(plot_filename)
         print(f"Plot saved to {plot_filename}")
     except Exception as e:
         print(f"Error saving plot {plot_filename}: {e}")
     # plt.show()
-
-# --- Inference Function --- #
-
-def classify_review(text, model, tokenizer, device, max_length=None, pad_token_id=50256):
-    """Classifies a single text review as spam or not spam using the fine-tuned model."""
-    model.eval() # Set to evaluation mode
-
-    # Prepare input text
-    input_ids = tokenizer.encode(text)
-
-    # Determine context length from model if possible, else use max_length
-    if max_length is None:
-         if hasattr(model, 'cfg') and 'context_length' in model.cfg:
-            max_length = model.cfg["context_length"]
-         else:
-             print("Warning: max_length not specified and cannot get from model. Using 256.")
-             max_length = 256 # Fallback
-
-    # Truncate if necessary
-    input_ids = input_ids[:max_length]
-
-    # Pad sequence
-    padded_length = max_length
-    if len(input_ids) < padded_length:
-        input_ids += [pad_token_id] * (padded_length - len(input_ids))
-
-    # Convert to tensor and add batch dimension
-    input_tensor = torch.tensor(input_ids, dtype=torch.long, device=device).unsqueeze(0)
-
-    # Get model output (logits for the last token)
-    with torch.no_grad():
-        logits = model(input_tensor)[:, -1, :]
-
-    # Get predicted label index
-    predicted_label = torch.argmax(logits, dim=-1).item()
-
-    # Return string label
-    return 'spam' if predicted_label == 1 else 'not spam (ham)' 

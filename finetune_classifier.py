@@ -18,8 +18,7 @@ from utils.classifier_utils import (
     SpamDataset, 
     train_classifier_simple, 
     plot_values, 
-    calc_accuracy_loader, 
-    classify_review
+    calc_accuracy_loader
 )
 
 url = "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip"
@@ -90,42 +89,31 @@ def random_split(df, train_frac, validation_frac):
 
 train_df, validation_df, test_df = random_split(balanced_df, 0.7, 0.1)
 
-train_df.to_csv("train.csv", index=None)
-validation_df.to_csv("validation.csv", index=None)
-test_df.to_csv("test.csv", index=None)
+train_df.to_csv("data/train.csv", index=None)
+validation_df.to_csv("data/validation.csv", index=None)
+test_df.to_csv("data/test.csv", index=None)
 
 def main_finetune():
     """Orchestrates the fine-tuning process for spam classification."""
 
-    # --- Configuration & Hyperparameters --- #
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {DEVICE}")
-
-    # Data parameters
-    DATA_URL = "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip"
-    ZIP_PATH = "sms_spam_collection.zip"
-    EXTRACTED_PATH = "sms_spam_collection"
-    DATA_FILE_NAME = "SMSSpamCollection.tsv" # Changed name slightly for clarity
-    DATA_FILE_PATH = Path(EXTRACTED_PATH) / DATA_FILE_NAME
-    TRAIN_CSV_PATH = "train.csv"
-    VAL_CSV_PATH = "validation.csv"
-    TEST_CSV_PATH = "test.csv"
-
-    # Fine-tuning hyperparameters
-    NUM_EPOCHS = 5
+    # --- Constants and Configuration --- #
+    NUM_EPOCHS = 1
     LEARNING_RATE = 5e-5 # Lower LR typically used for fine-tuning
     BATCH_SIZE = 8
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    TRAIN_CSV_PATH = "data/train.csv"
+    VAL_CSV_PATH = "data/validation.csv"
+    TEST_CSV_PATH = "data/test.csv"
+    SAVE_MODEL_PATH = "spam_classifier_finetuned.pth"
+    MODEL_SIZE = '124M'
+    MODELS_DIR = 'gpt2'
     EVAL_FREQ = 50 # Evaluate every N steps during training
     EVAL_ITER = 5 # Number of batches for evaluation loss/accuracy calculation
-    WEIGHT_DECAY = 0.1 # Weight decay for AdamW optimizer
+    WEIGHT_DECAY = 0.1 # Weight decay for AdamW optimize
 
-    # Model loading parameters
-    PRETRAINED_MODEL_SIZE = '124M'
-    MODELS_DIR = 'gpt2'
-
-    # --- 1. Prepare Dataset --- #
+    # --- Data Preparation --- #
     print("--- Preparing Dataset --- ")
-    prepare_spam_dataset(DATA_URL, ZIP_PATH, EXTRACTED_PATH, DATA_FILE_PATH)
+    prepare_spam_dataset(url, zip_path, extracted_path, data_file_path)
     # Basic check if CSV files were created
     if not (os.path.exists(TRAIN_CSV_PATH) and os.path.exists(VAL_CSV_PATH) and os.path.exists(TEST_CSV_PATH)):
         print("ERROR: Required CSV files (train/validation/test.csv) not found. Exiting.")
@@ -135,12 +123,12 @@ def main_finetune():
     # --- 2. Load Pre-trained Model --- #
     print("--- Loading Pre-trained Model --- ")
     # Call the main function from pretrained_gpt2, disable its generation test
-    model = main(model_size=PRETRAINED_MODEL_SIZE, models_dir=MODELS_DIR, run_generation_test=False)
+    model = main(model_size=MODEL_SIZE, models_dir=MODELS_DIR, run_generation_test=False)
     if model is None:
         print("ERROR: Failed to load pre-trained model. Exiting.")
         return
     model.to(DEVICE) # Ensure model is on the correct device
-    print(f"Pre-trained model {PRETRAINED_MODEL_SIZE} loaded and moved to {DEVICE}.")
+    print(f"Pre-trained model {MODEL_SIZE} loaded and moved to {DEVICE}.")
 
     # --- 3. Adapt Model for Classification --- #
     print("--- Adapting Model for Classification --- ")
@@ -237,39 +225,27 @@ def main_finetune():
 
     # --- 7. Plot Results --- #
     if train_losses and val_losses:
-        epochs_tensor = torch.linspace(0, NUM_EPOCHS, len(train_losses))
-        # Create examples seen tensor based on steps and batch size (approximation)
+        print("--- Plotting Training & Validation Loss --- ")
+        # Adjust x-axis values (e.g., use steps instead of examples seen if preferred)
         # examples_seen_plot = torch.linspace(0, examples_seen, len(train_losses))
         # Or use steps directly for x-axis
         steps_tensor = torch.arange(0, len(train_losses)*EVAL_FREQ, EVAL_FREQ)
-        plot_values(steps_tensor, steps_tensor, train_losses, val_losses, label="loss")
+        plot_values(steps_tensor, steps_tensor, train_losses, val_losses, label="loss", 
+                    output_path="outputs/finetune-loss-plot.png")
 
     if train_accs and val_accs:
         epochs_tensor_acc = torch.linspace(0, NUM_EPOCHS, len(train_accs))
         # steps_tensor_acc = torch.arange(EVAL_FREQ, len(train_accs)*EVAL_FREQ + 1, EVAL_FREQ)
-        plot_values(epochs_tensor_acc, epochs_tensor_acc * len(train_loader) * BATCH_SIZE, train_accs, val_accs, label="accuracy")
+        plot_values(epochs_tensor_acc, epochs_tensor_acc * len(train_loader) * BATCH_SIZE,
+                    train_accs, val_accs, label="accuracy", output_path="outputs/finetune-accuracy-plot.png")
 
     # --- 8. Evaluate on Test Set --- #
     print("--- Evaluating on Test Set --- ")
     test_accuracy = calc_accuracy_loader(test_loader, model, DEVICE)
-    print(f"Test accuracy: {test_accuracy*100:.2f}%" ) # Removed extra space
+    print(f"Test accuracy: {test_accuracy*100:.2f}%" )
 
-    # --- 9. Example Classification --- #
-    print("--- Classifying Example Texts --- ")
-    text_1 = (
-        "You are a winner you have been specially"
-        " selected to receive $1000 cash or a $2000 award."
-    )
-    text_2 = (
-        "Hey, just wanted to check if we're still on"
-        " for dinner tonight? Let me know!"
-    )
-    print(f"'{text_1}' -> {classify_review(text_1, model, tokenizer, DEVICE, max_length=max_len)}")
-    print(f"'{text_2}' -> {classify_review(text_2, model, tokenizer, DEVICE, max_length=max_len)}")
-
-    # --- 10. Save Fine-tuned Model --- #
+    # --- 9. Save Fine-tuned Model --- #
     print("--- Saving Fine-tuned Model --- ")
-    model_save_path = "spam_classifier_finetuned.pth"
     try:
         torch.save({
             'model_state_dict': model.state_dict(),
@@ -277,9 +253,9 @@ def main_finetune():
             'config': model.cfg # Save the config used by the model
             # Add other info if needed, e.g., epoch, loss
             },
-            model_save_path
+            SAVE_MODEL_PATH
         )
-        print(f"Fine-tuned model saved to {model_save_path}")
+        print(f"Fine-tuned model saved to {SAVE_MODEL_PATH}")
     except Exception as e:
         print(f"ERROR saving model: {e}")
 
