@@ -62,10 +62,6 @@ def main(model_size='124M', models_dir='gpt2', run_generation_test=False):
     try:
         load_weights_into_gpt(model, params)
         print("Weights loaded successfully.") # Confirmation message
-    except ValueError as e:
-        print(f"ERROR loading weights: {e}")
-        print("Check model config vs downloaded weights.")
-        return None # Return None on failure
     except Exception as e:
         print(f"ERROR: An unexpected error occurred during weight loading: {e}")
         return None # Return None on failure
